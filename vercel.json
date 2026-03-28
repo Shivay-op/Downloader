@@ -1,3 +1,4 @@
+
 {
   "version": 2,
   "builds": [
@@ -7,6 +8,7 @@
   "routes": [
     { "src": "/api/download", "dest": "/api/download.py" },
     { "src": "/api/download/(.*)", "dest": "/api/download.py" },
-    { "src": "/api/services", "dest": "/api/services.py" }
+    { "src": "/api/services", "dest": "/api/services.py" },
+    { "src": "/api/services/(.*)", "dest": "/api/services.py" }
   ]
 }
