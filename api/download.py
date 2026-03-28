@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import RedirectResponse, JSONResponse
 import yt_dlp
 import string, random
 from urllib.parse import urlparse
+import os
 
 app = FastAPI()
 
@@ -27,26 +28,30 @@ def is_valid_url(url: str):
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and parsed.netloc
 
-# yt_dlp options
-ydl_opts = {
-    'quiet': True,
-    'skip_download': True,
-    'noplaylist': False,
-    'format': 'bestvideo+bestaudio/best'
-}
+# Base yt_dlp options
+def get_ydl_opts(cookies_file=None):
+    opts = {
+        'quiet': True,
+        'skip_download': True,
+        'noplaylist': False,
+        'format': 'bestvideo+bestaudio/best',
+    }
+    if cookies_file and os.path.isfile(cookies_file):
+        opts['cookiefile'] = cookies_file
+    return opts
 
 @app.get("/api/download")
-def download(url: str, request: Request):
+def download(url: str, request: Request, cookies_file: str = Query(default=None, description="Optional path to cookies.txt for authenticated downloads")):
     if not url or not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
     try:
+        ydl_opts = get_ydl_opts(cookies_file)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
         videos = []
 
-        # Handle playlists or single videos
         entries = info.get("entries") or [info]
 
         for entry in entries:
@@ -71,7 +76,7 @@ def download(url: str, request: Request):
                         "filesize": f.get("filesize")
                     }
 
-            # Handle thumbnail short link
+            # Thumbnail short link
             thumbnail_url = entry.get("thumbnail")
             if thumbnail_url:
                 thumb_short = str(request.base_url) + f"d/{create_short_link(thumbnail_url)}"
@@ -79,7 +84,7 @@ def download(url: str, request: Request):
             else:
                 thumbnail_info = {"url": None}
 
-            # Add optional width/height if available
+            # Optional width/height
             if entry.get("thumbnails"):
                 thumb = entry.get("thumbnails")[-1]
                 thumbnail_info["width"] = thumb.get("width")
