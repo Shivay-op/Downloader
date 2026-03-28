@@ -28,7 +28,7 @@ def is_valid_url(url: str):
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and parsed.netloc
 
-# Base yt_dlp options
+# yt_dlp options
 def get_ydl_opts(cookies_file=None):
     opts = {
         'quiet': True,
@@ -40,8 +40,22 @@ def get_ydl_opts(cookies_file=None):
         opts['cookiefile'] = cookies_file
     return opts
 
+# Optional: Get filesize from headers if not available
+import requests
+def get_filesize_from_url(url):
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=5)
+        size = r.headers.get("Content-Length")
+        return int(size) if size else None
+    except:
+        return None
+
 @app.get("/api/download")
-def download(url: str, request: Request, cookies_file: str = Query(default=None, description="Optional path to cookies.txt for authenticated downloads")):
+def download(
+    url: str,
+    request: Request,
+    cookies_file: str = Query(default=None, description="Optional path to cookies.txt for authenticated downloads")
+):
     if not url or not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
@@ -63,17 +77,22 @@ def download(url: str, request: Request, cookies_file: str = Query(default=None,
                 key = f"{height}p" if height else "audio_only"
                 abs_url = str(request.base_url) + f"d/{create_short_link(f.get('url'))}"
 
+                # Get filesize: yt_dlp filesize or approximate or HTTP HEAD fallback
+                filesize = f.get("filesize") or f.get("filesize_approx") or None
+                # Optional: uncomment next line for live HEAD check (slower)
+                # if filesize is None: filesize = get_filesize_from_url(f.get("url"))
+
                 if f.get("vcodec") != "none" and f.get("acodec") != "none":
                     video_obj[key] = {
                         "url": abs_url,
                         "extension": f.get("ext"),
-                        "filesize": f.get("filesize")
+                        "filesize": filesize
                     }
                 elif f.get("vcodec") == "none" and f.get("acodec") != "none":
                     audio_obj[key] = {
                         "url": abs_url,
                         "extension": f.get("ext"),
-                        "filesize": f.get("filesize")
+                        "filesize": filesize
                     }
 
             # Thumbnail short link
@@ -84,11 +103,18 @@ def download(url: str, request: Request, cookies_file: str = Query(default=None,
             else:
                 thumbnail_info = {"url": None}
 
-            # Optional width/height
+            # Width/height
             if entry.get("thumbnails"):
                 thumb = entry.get("thumbnails")[-1]
                 thumbnail_info["width"] = thumb.get("width")
                 thumbnail_info["height"] = thumb.get("height")
+
+            # Sort video qualities descending (highest p first)
+            video_sorted = dict(sorted(
+                video_obj.items(),
+                key=lambda x: int(x[0].replace('p','')) if x[0]!='audio_only' else 0,
+                reverse=True
+            ))
 
             videos.append({
                 "platform": entry.get("extractor_key"),
@@ -97,7 +123,7 @@ def download(url: str, request: Request, cookies_file: str = Query(default=None,
                 "thumbnail": thumbnail_info,
                 "duration": entry.get("duration"),
                 "description": entry.get("description"),
-                "video": dict(sorted(video_obj.items(), key=lambda x: int(x[0].replace('p','')) if x[0]!='audio_only' else 0, reverse=True)),
+                "video": video_sorted,
                 "audio": audio_obj
             })
 
