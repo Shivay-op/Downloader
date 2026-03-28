@@ -31,7 +31,7 @@ def is_valid_url(url: str):
 ydl_opts = {
     'quiet': True,
     'skip_download': True,
-    'noplaylist': False,  # allow playlist extraction
+    'noplaylist': False,
     'format': 'bestvideo+bestaudio/best'
 }
 
@@ -58,14 +58,12 @@ def download(url: str, request: Request):
                 key = f"{height}p" if height else "audio_only"
                 abs_url = str(request.base_url) + f"d/{create_short_link(f.get('url'))}"
 
-                # Video + Audio
                 if f.get("vcodec") != "none" and f.get("acodec") != "none":
                     video_obj[key] = {
                         "url": abs_url,
                         "extension": f.get("ext"),
                         "filesize": f.get("filesize")
                     }
-                # Audio only
                 elif f.get("vcodec") == "none" and f.get("acodec") != "none":
                     audio_obj[key] = {
                         "url": abs_url,
@@ -73,14 +71,24 @@ def download(url: str, request: Request):
                         "filesize": f.get("filesize")
                     }
 
+            # Thumbnail width/height (if available)
+            thumbnail_info = {
+                "url": entry.get("thumbnail")
+            }
+            # yt_dlp sometimes has "thumbnails" list with width/height
+            if entry.get("thumbnails"):
+                thumb = entry.get("thumbnails")[-1]  # highest quality thumbnail
+                thumbnail_info["width"] = thumb.get("width")
+                thumbnail_info["height"] = thumb.get("height")
+
             videos.append({
                 "platform": entry.get("extractor_key"),
                 "title": entry.get("title"),
                 "uploader": entry.get("uploader"),
-                "thumbnail": {"url": entry.get("thumbnail")},
+                "thumbnail": thumbnail_info,
                 "duration": entry.get("duration"),
                 "description": entry.get("description"),
-                "video": video_obj,
+                "video": dict(sorted(video_obj.items(), key=lambda x: int(x[0].replace('p','')) if x[0]!='audio_only' else 0, reverse=True)),
                 "audio": audio_obj
             })
 
