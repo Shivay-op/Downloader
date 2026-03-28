@@ -1,13 +1,15 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/download.py", "use": "@vercel/python" },
-    { "src": "api/services.py", "use": "@vercel/python" }
+    {
+      "src": "api/download.py",
+      "use": "@vercel/python"
+    }
   ],
   "routes": [
-    { "src": "/api/download", "dest": "/api/download.py" },
-    { "src": "/api/download/(.*)", "dest": "/api/download.py" },
-    { "src": "/api/services", "dest": "/api/services.py" },
-    { "src": "/api/services/(.*)", "dest": "/api/services.py" }
+    {
+      "src": "/(.*)",
+      "dest": "/api/download.py"
+    }
   ]
 }
