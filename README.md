@@ -69,9 +69,11 @@ https://your-project.vercel.app/api/download?url=https://www.instagram.com/reel/
 }
 ```
 **Installation (Local / VPS)**
--Clone the repo:
--git clone https://github.com/<your-username>/multi-platform-downloader.git
--cd multi-platform-downloader
+- Clone the repo:
+```
+git clone https://github.com/<your-username>/multi-platform-downloader.git
+cd multi-platform-downloader
+```
 **Install dependencies:**
 - pip install -r requirements.txt
 - Run locally:
