@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 import yt_dlp
 import string, random
 from urllib.parse import urlparse
 import os
-import requests
 
 app = FastAPI()
 
@@ -29,7 +28,7 @@ def is_valid_url(url: str):
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and parsed.netloc
 
-# yt_dlp options (IMPORTANT FOR INSTAGRAM)
+# yt_dlp options
 def get_ydl_opts(cookies_file=None):
     opts = {
         'quiet': True,
@@ -44,7 +43,7 @@ def get_ydl_opts(cookies_file=None):
         opts['cookiefile'] = cookies_file
     return opts
 
-# MAIN API
+# MAIN DOWNLOAD API (metadata only)
 @app.get("/api/download")
 def download(
     url: str,
@@ -56,7 +55,6 @@ def download(
 
     try:
         ydl_opts = get_ydl_opts(cookies_file)
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
@@ -70,32 +68,23 @@ def download(
             video_obj = {}
             audio_obj = {}
 
-            formats = entry.get("formats", [])
-            if not formats:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No formats found. Instagram may require login (use cookies)."
-                )
-
-            for f in formats:
+            for f in entry.get("formats", []):
                 if not f.get("url"):
                     continue
 
                 height = f.get("height")
                 key = f"{height}p" if height else "audio"
 
+                # Use short link (clients fetch video directly)
                 short_id = create_short_link(f.get("url"))
-                abs_url = str(request.base_url) + f"stream/{short_id}"
+                abs_url = str(request.base_url) + f"d/{short_id}"
 
-                # Video + Audio
                 if f.get("vcodec") != "none" and f.get("acodec") != "none":
                     video_obj[key] = {
                         "url": abs_url,
                         "ext": f.get("ext"),
                         "filesize": f.get("filesize") or "unknown"
                     }
-
-                # Audio only
                 elif f.get("vcodec") == "none" and f.get("acodec") != "none":
                     abr = f.get("abr") or "unknown"
                     audio_obj[f"{abr}kbps"] = {
@@ -138,35 +127,7 @@ def download(
             detail="Failed to fetch video. Instagram may require cookies or is blocking the request."
         )
 
-# STREAM (BEST FEATURE 🔥)
-@app.get("/stream/{short_id}")
-def stream(short_id: str):
-    url = short_db.get(short_id)
-
-    if not url:
-        raise HTTPException(status_code=404, detail="Invalid link")
-
-    if not is_valid_url(url):
-        raise HTTPException(status_code=400, detail="Unsafe URL")
-
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-        r = requests.get(url, headers=headers, stream=True)
-
-        if r.status_code != 200:
-            raise HTTPException(status_code=500, detail="Failed to fetch media")
-
-        return StreamingResponse(
-            r.iter_content(chunk_size=1024),
-            media_type=r.headers.get("content-type", "video/mp4")
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Streaming failed")
-
-# REDIRECT (for thumbnails etc.)
+# REDIRECT short link (client fetches video directly)
 @app.get("/d/{short_id}")
 def redirect_link(short_id: str):
     url = short_db.get(short_id)
