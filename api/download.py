@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 import yt_dlp
 import string, random
 from urllib.parse import urlparse
 import os
+import requests
 
 app = FastAPI()
 
@@ -28,94 +29,152 @@ def is_valid_url(url: str):
     parsed = urlparse(url)
     return parsed.scheme in ("http", "https") and parsed.netloc
 
-# Base yt_dlp options
+# yt_dlp options (IMPORTANT FOR INSTAGRAM)
 def get_ydl_opts(cookies_file=None):
     opts = {
         'quiet': True,
         'skip_download': True,
         'noplaylist': False,
         'format': 'bestvideo+bestaudio/best',
+        'nocheckcertificate': True,
+        'ignoreerrors': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/115.0 Safari/537.36'
     }
     if cookies_file and os.path.isfile(cookies_file):
         opts['cookiefile'] = cookies_file
     return opts
 
+# MAIN API
 @app.get("/api/download")
-def download(url: str, request: Request, cookies_file: str = Query(default=None, description="Optional path to cookies.txt for authenticated downloads")):
+def download(
+    url: str,
+    request: Request,
+    cookies_file: str = Query(default=None)
+):
     if not url or not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
     try:
         ydl_opts = get_ydl_opts(cookies_file)
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        videos = []
+        if not info:
+            raise HTTPException(status_code=400, detail="Failed to extract info")
 
+        videos = []
         entries = info.get("entries") or [info]
 
         for entry in entries:
             video_obj = {}
             audio_obj = {}
 
-            for f in entry.get("formats", []):
-                height = f.get("height")
-                key = f"{height}p" if height else "audio_only"
-                abs_url = str(request.base_url) + f"d/{create_short_link(f.get('url'))}"
+            formats = entry.get("formats", [])
+            if not formats:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No formats found. Instagram may require login (use cookies)."
+                )
 
+            for f in formats:
+                if not f.get("url"):
+                    continue
+
+                height = f.get("height")
+                key = f"{height}p" if height else "audio"
+
+                short_id = create_short_link(f.get("url"))
+                abs_url = str(request.base_url) + f"stream/{short_id}"
+
+                # Video + Audio
                 if f.get("vcodec") != "none" and f.get("acodec") != "none":
                     video_obj[key] = {
                         "url": abs_url,
-                        "extension": f.get("ext"),
-                        "filesize": f.get("filesize")
-                    }
-                elif f.get("vcodec") == "none" and f.get("acodec") != "none":
-                    audio_obj[key] = {
-                        "url": abs_url,
-                        "extension": f.get("ext"),
-                        "filesize": f.get("filesize")
+                        "ext": f.get("ext"),
+                        "filesize": f.get("filesize") or "unknown"
                     }
 
-            # Thumbnail short link
+                # Audio only
+                elif f.get("vcodec") == "none" and f.get("acodec") != "none":
+                    abr = f.get("abr") or "unknown"
+                    audio_obj[f"{abr}kbps"] = {
+                        "url": abs_url,
+                        "ext": f.get("ext"),
+                        "filesize": f.get("filesize") or "unknown"
+                    }
+
+            # Thumbnail
             thumbnail_url = entry.get("thumbnail")
+            thumb_short = None
             if thumbnail_url:
                 thumb_short = str(request.base_url) + f"d/{create_short_link(thumbnail_url)}"
-                thumbnail_info = {"url": thumb_short}
-            else:
-                thumbnail_info = {"url": None}
-
-            # Optional width/height
-            if entry.get("thumbnails"):
-                thumb = entry.get("thumbnails")[-1]
-                thumbnail_info["width"] = thumb.get("width")
-                thumbnail_info["height"] = thumb.get("height")
 
             videos.append({
                 "platform": entry.get("extractor_key"),
                 "title": entry.get("title"),
                 "uploader": entry.get("uploader"),
-                "thumbnail": thumbnail_info,
                 "duration": entry.get("duration"),
                 "description": entry.get("description"),
-                "video": dict(sorted(video_obj.items(), key=lambda x: int(x[0].replace('p','')) if x[0]!='audio_only' else 0, reverse=True)),
+                "thumbnail": thumb_short,
+                "video": dict(sorted(
+                    video_obj.items(),
+                    key=lambda x: int(x[0].replace('p','')) if 'p' in x[0] else 0,
+                    reverse=True
+                )),
                 "audio": audio_obj
             })
 
         return JSONResponse({
-            "status": "success",
-            "Credit": "@xdshivay",
-            "videos": videos
+            "status": True,
+            "developer": "@xdshivay",
+            "data": videos
         })
 
     except Exception as e:
-        raise HTTPException(status_code=500,detail="Failed to fetch the video. The content may be private, unavailable, or blocked.")
+        print("ERROR:", str(e))  # Debug
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch video. Instagram may require cookies or is blocking the request."
+        )
 
+# STREAM (BEST FEATURE 🔥)
+@app.get("/stream/{short_id}")
+def stream(short_id: str):
+    url = short_db.get(short_id)
 
+    if not url:
+        raise HTTPException(status_code=404, detail="Invalid link")
+
+    if not is_valid_url(url):
+        raise HTTPException(status_code=400, detail="Unsafe URL")
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        r = requests.get(url, headers=headers, stream=True)
+
+        if r.status_code != 200:
+            raise HTTPException(status_code=500, detail="Failed to fetch media")
+
+        return StreamingResponse(
+            r.iter_content(chunk_size=1024),
+            media_type=r.headers.get("content-type", "video/mp4")
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Streaming failed")
+
+# REDIRECT (for thumbnails etc.)
 @app.get("/d/{short_id}")
 def redirect_link(short_id: str):
     url = short_db.get(short_id)
+
     if not url:
         raise HTTPException(status_code=404, detail="Invalid link")
+
     if not is_valid_url(url):
         raise HTTPException(status_code=400, detail="Unsafe URL")
+
     return RedirectResponse(url)
